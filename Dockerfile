@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24.3-alpine AS builder
+FROM golang:1.26.4-alpine AS builder
 
 WORKDIR /app
 
@@ -11,7 +11,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o orderly-queue .
+RUN CGO_ENABLED=0 GOOS=linux go build -o orderlyq .
 
 # Final stage
 FROM scratch
@@ -19,9 +19,6 @@ FROM scratch
 WORKDIR /
 
 # Copy binary from builder
-COPY --from=builder /app/orderly-queue /orderly-queue
+COPY --from=builder /app/orderlyq /orderlyq
 
-# Copy default config (actual config should be mounted)
-COPY --from=builder /app/config/config.example.yaml /config/config.example.yaml
-
-ENTRYPOINT ["/orderly-queue"]
+ENTRYPOINT ["/orderlyq"]

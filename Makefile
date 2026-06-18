@@ -1,4 +1,4 @@
-BINARY_NAME=orderly-queue
+BINARY_NAME=orderlyq
 
 build:
 	go build -o $(BINARY_NAME) main.go

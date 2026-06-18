@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   orderly-queue:
     image: orderly-queue:latest
@@ -10,4 +8,6 @@ services:
     volumes:
       - ./config/config.yaml:/config/config.yaml:ro
       - ./.env:/.env:ro
-    restart: always
+    restart: on-failure:10
+    extra_hosts:
+      - "host.docker.internal:host-gateway"    
