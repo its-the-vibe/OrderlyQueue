@@ -1,0 +1,22 @@
+redis:
+  addr: "localhost:6379"
+  password: "" # Set via .env
+  db: 0
+
+keys:
+  lock: "orderlyq:current-task"
+  pr_list: "orderlyq:pr-queue"
+  poppit_list: "poppit:tasks"
+  merge_commit_sha: "orderlyq:merge_commit_sha"
+
+channels:
+  github_events: "github:events"
+  cicd_events: "cicd:events"
+
+timeouts:
+  lock_sleep: "10s"
+  lock_expiry: "30m"
+  cicd_delay: "5m"
+
+poppit:
+  dir: "/path/to/repo"

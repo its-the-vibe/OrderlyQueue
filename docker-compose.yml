@@ -1,0 +1,13 @@
+services:
+  orderly-queue:
+    image: orderly-queue:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    read_only: true
+    volumes:
+      - ./config/config.yaml:/config/config.yaml:ro
+      - ./.env:/.env:ro
+    restart: on-failure:10
+    extra_hosts:
+      - "host.docker.internal:host-gateway"    
