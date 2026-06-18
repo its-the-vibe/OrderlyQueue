@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"testing"
 	"time"
 
@@ -23,9 +24,11 @@ func setupTestService(t *testing.T) (*Service, *miniredis.Miniredis) {
 	cfg.Keys.Lock = "test:lock"
 	cfg.Keys.PRList = "test:pr-list"
 	cfg.Keys.PoppitList = "test:poppit-list"
+	cfg.Keys.MergeCommitSHA = "test:merge-commit-sha"
 	cfg.Channels.GithubEvents = "test:github-events"
 	cfg.Channels.CICDEvents = "test:cicd-events"
 	cfg.Timeouts.LockExpiry = 30 * time.Minute
+	cfg.Timeouts.CICDDelay = 5 * time.Minute
 
 	svc := NewService(cfg)
 	return svc, mr
@@ -58,7 +61,7 @@ func TestFetchNextPR(t *testing.T) {
 	svc, mr := setupTestService(t)
 	ctx := context.Background()
 
-	prURL := "http://github.com/org/repo/pull/1"
+	prURL := "https://github.com/org/repo/pull/1"
 	mr.RPush(svc.cfg.Keys.PRList, prURL)
 
 	fetched, err := svc.FetchNextPR(ctx)
@@ -71,7 +74,7 @@ func TestDispatchMerge(t *testing.T) {
 	svc, mr := setupTestService(t)
 	ctx := context.Background()
 
-	prURL := "http://github.com/org/repo/pull/1"
+	prURL := "https://github.com/owner/repo/pull/1"
 	err := svc.DispatchMerge(ctx, prURL)
 	if err != nil {
 		t.Errorf("failed to dispatch merge: %v", err)
@@ -87,6 +90,10 @@ func TestDispatchMerge(t *testing.T) {
 		t.Errorf("failed to unmarshal poppit command: %v", err)
 	}
 
+	if cmd.Repo != "owner/repo" {
+		t.Errorf("expected repo owner/repo, got %s", cmd.Repo)
+	}
+
 	if cmd.Metadata.PRURL != prURL {
 		t.Errorf("expected PR URL %s, got %s", prURL, cmd.Metadata.PRURL)
 	}
@@ -97,41 +104,69 @@ func TestWaitEvents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	prURL := "http://github.com/org/repo/pull/1"
+	prURL := "https://github.com/org/repo/pull/1"
 	mergeSHA := "deadbeef"
 
-	// Test WaitForMergeEvent
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		event := models.GithubPREvent{
-			PRURL:          prURL,
+	// Mock current lock
+	mr.Set(svc.cfg.Keys.Lock, prURL)
+
+	// Start loops
+	go svc.GithubEventLoop(ctx)
+	go svc.CICDEventLoop(ctx)
+
+	// Wait for subscription to be active
+	time.Sleep(100 * time.Millisecond)
+
+	// Test GithubEventLoop
+	event := models.GithubPREvent{
+		PullRequest: models.PullRequest{
+			HTMLURL:        prURL,
 			State:          "closed",
 			Merged:         true,
 			MergeCommitSHA: mergeSHA,
-		}
-		payload, _ := json.Marshal(event)
-		mr.Publish(svc.cfg.Channels.GithubEvents, string(payload))
-	}()
+		},
+	}
+	payload, _ := json.Marshal(event)
+	log.Printf("Publishing Github event: %s", string(payload))
+	mr.Publish(svc.cfg.Channels.GithubEvents, string(payload))
 
-	sha, err := svc.WaitForMergeEvent(ctx, prURL)
-	if err != nil || sha != mergeSHA {
-		t.Errorf("expected SHA %s, got %s, err=%v", mergeSHA, sha, err)
+	// Wait for SHA to be stored
+	success := false
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		storedSHA, err := mr.Get(svc.cfg.Keys.MergeCommitSHA)
+		if err == nil && storedSHA == mergeSHA {
+			success = true
+			break
+		}
+	}
+	if !success {
+		storedSHA, _ := mr.Get(svc.cfg.Keys.MergeCommitSHA)
+		t.Errorf("expected SHA %s, got %s", mergeSHA, storedSHA)
 	}
 
-	// Test WaitForCICDEvent
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		event := models.CICDCompletionEvent{
-			CorrelationID: mergeSHA,
-			Event:         "end",
-			Timestamp:     time.Now().Format(time.RFC3339),
-		}
-		payload, _ := json.Marshal(event)
-		mr.Publish(svc.cfg.Channels.CICDEvents, string(payload))
-	}()
+	// Test CICDEventLoop
+	cicdEvent := models.CICDCompletionEvent{
+		CorrelationID: mergeSHA,
+		Event:         "end",
+		Timestamp:     time.Now().Format(time.RFC3339),
+	}
+	cicdPayload, _ := json.Marshal(cicdEvent)
+	log.Printf("Publishing CICD event: %s", string(cicdPayload))
+	mr.Publish(svc.cfg.Channels.CICDEvents, string(cicdPayload))
 
-	err = svc.WaitForCICDEvent(ctx, mergeSHA)
-	if err != nil {
-		t.Errorf("expected no error, got %v", err)
+	// Wait for lock expiry to be updated
+	success = false
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		ttl := mr.TTL(svc.cfg.Keys.Lock)
+		if ttl > 0 && ttl <= 5*time.Minute {
+			success = true
+			break
+		}
+	}
+	if !success {
+		ttl := mr.TTL(svc.cfg.Keys.Lock)
+		t.Errorf("expected TTL to be around 5m, got %v", ttl)
 	}
 }

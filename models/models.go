@@ -14,8 +14,12 @@ type PoppitMetadata struct {
 }
 
 type GithubPREvent struct {
-	Action         string `json:"action"`
-	PRURL          string `json:"pr_url"`
+	Action      string      `json:"action"`
+	PullRequest PullRequest `json:"pull_request"`
+}
+
+type PullRequest struct {
+	HTMLURL        string `json:"html_url"`
 	State          string `json:"state"`
 	Merged         bool   `json:"merged"`
 	MergeCommitSHA string `json:"merge_commit_sha"`

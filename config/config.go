@@ -30,8 +30,7 @@ type Config struct {
 		CICDDelay  time.Duration `yaml:"cicd_delay"`
 	} `yaml:"timeouts"`
 	Poppit struct {
-		Dir  string `yaml:"dir"`
-		Repo string `yaml:"repo"`
+		Dir string `yaml:"dir"`
 	} `yaml:"poppit"`
 }
 

@@ -20,4 +20,3 @@ timeouts:
 
 poppit:
   dir: "/path/to/repo"
-  repo: "owner/repo"

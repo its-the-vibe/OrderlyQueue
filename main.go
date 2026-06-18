@@ -10,6 +10,7 @@ import (
 	"OrderlyQueue/config"
 	"OrderlyQueue/models"
 	"os"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -65,8 +66,15 @@ func (s *Service) FetchNextPR(ctx context.Context) (string, error) {
 
 // DispatchMerge sends the merge command to Poppit
 func (s *Service) DispatchMerge(ctx context.Context, prURL string) error {
+	// Parse owner/repo from PR URL: https://github.com/owner/repo/pull/1
+	parts := strings.Split(prURL, "/")
+	if len(parts) < 5 {
+		return fmt.Errorf("invalid PR URL: %s", prURL)
+	}
+	repo := parts[3] + "/" + parts[4]
+
 	cmd := models.PoppitMergeCommand{
-		Repo:   s.cfg.Poppit.Repo,
+		Repo:   repo,
 		Branch: "refs/heads/main",
 		Type:   "orderly-queue",
 		Dir:    s.cfg.Poppit.Dir,
@@ -84,54 +92,12 @@ func (s *Service) DispatchMerge(ctx context.Context, prURL string) error {
 	return s.redis.RPush(ctx, s.cfg.Keys.PoppitList, payload).Err()
 }
 
-// WaitForMergeEvent waits for a GitHub PR merge event for the given PR URL
-func (s *Service) WaitForMergeEvent(ctx context.Context, prURL string) (string, error) {
-	pubsub := s.redis.Subscribe(ctx, s.cfg.Channels.GithubEvents)
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case msg := <-ch:
-			var event models.GithubPREvent
-			if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
-				log.Printf("Error unmarshaling GitHub event: %v", err)
-				continue
-			}
-			if event.State == "closed" && event.Merged && event.PRURL == prURL {
-				return event.MergeCommitSHA, nil
-			}
-		}
-	}
-}
-
-// WaitForCICDEvent waits for a CI/CD completion event for the given merge SHA
-func (s *Service) WaitForCICDEvent(ctx context.Context, mergeSHA string) error {
-	pubsub := s.redis.Subscribe(ctx, s.cfg.Channels.CICDEvents)
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case msg := <-ch:
-			var event models.CICDCompletionEvent
-			if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
-				log.Printf("Error unmarshaling CICD event: %v", err)
-				continue
-			}
-			if event.CorrelationID == mergeSHA && event.Event == "end" {
-				return nil
-			}
-		}
-	}
-}
-
 func (s *Service) Run(ctx context.Context) error {
 	log.Println("OrderlyQueue Service started")
+
+	// Start independent loops for Step 6 and Step 7
+	go s.GithubEventLoop(ctx)
+	go s.CICDEventLoop(ctx)
 
 	for {
 		// Step 1-2: Check Lock State
@@ -165,39 +131,92 @@ func (s *Service) Run(ctx context.Context) error {
 			log.Printf("Error dispatching merge: %v", err)
 			continue
 		}
+		// The lock creation with long expiry handles the "Waiting for merge" state
 		if err := s.AcquireLock(ctx, prURL, s.cfg.Timeouts.LockExpiry); err != nil {
 			log.Printf("Error acquiring lock: %v", err)
 			continue
 		}
 		log.Printf("Merge dispatched and lock acquired for PR: %s", prURL)
+	}
+}
 
-		// Step 6: Listen for Merge Completion Events
-		mergeSHA, err := s.WaitForMergeEvent(ctx, prURL)
-		if err != nil {
-			log.Printf("Error waiting for merge event: %v", err)
-			continue
+func (s *Service) GithubEventLoop(ctx context.Context) {
+	pubsub := s.redis.Subscribe(ctx, s.cfg.Channels.GithubEvents)
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-ch:
+			var event models.GithubPREvent
+			if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
+				log.Printf("Error unmarshaling GitHub event: %v", err)
+				continue
+			}
+
+			if event.PullRequest.State == "closed" && event.PullRequest.Merged {
+				prURL := event.PullRequest.HTMLURL
+				// Verify PR URL matches current lock key value
+				currentPR, err := s.redis.Get(ctx, s.cfg.Keys.Lock).Result()
+				if err != nil {
+					if err != redis.Nil {
+						log.Printf("Error getting current lock: %v", err)
+					}
+					continue
+				}
+
+				if currentPR == prURL {
+					mergeSHA := event.PullRequest.MergeCommitSHA
+					log.Printf("Merge completed for PR %s, SHA: %s", prURL, mergeSHA)
+					// Store with a reasonably long expiry to avoid it sitting forever but long enough for CI/CD
+					if err := s.redis.Set(ctx, s.cfg.Keys.MergeCommitSHA, mergeSHA, 1*time.Hour).Err(); err != nil {
+						log.Printf("Error storing merge commit SHA: %v", err)
+					}
+				}
+			}
 		}
-		log.Printf("Merge completed for PR %s, SHA: %s", prURL, mergeSHA)
+	}
+}
 
-		// Store SHA
-		if err := s.redis.Set(ctx, s.cfg.Keys.MergeCommitSHA, mergeSHA, 0).Err(); err != nil {
-			log.Printf("Error storing merge commit SHA: %v", err)
+func (s *Service) CICDEventLoop(ctx context.Context) {
+	pubsub := s.redis.Subscribe(ctx, s.cfg.Channels.CICDEvents)
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-ch:
+			var event models.CICDCompletionEvent
+			if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
+				log.Printf("Error unmarshaling CICD event: %v", err)
+				continue
+			}
+
+			if event.Event == "end" {
+				// Correlation ID matching stored merge SHA
+				storedSHA, err := s.redis.Get(ctx, s.cfg.Keys.MergeCommitSHA).Result()
+				if err != nil {
+					if err != redis.Nil {
+						log.Printf("Error getting stored merge SHA: %v", err)
+					}
+					continue
+				}
+
+				if storedSHA == event.CorrelationID {
+					log.Printf("CI/CD completed for SHA: %s", storedSHA)
+					// Update lock key expiry to delay duration
+					if err := s.UpdateLockExpiry(ctx, s.cfg.Timeouts.CICDDelay); err != nil {
+						log.Printf("Error updating lock expiry: %v", err)
+					} else {
+						log.Printf("Lock expiry updated to delay duration: %v", s.cfg.Timeouts.CICDDelay)
+					}
+				}
+			}
 		}
-
-		// Step 7: Listen for CI/CD Completion Events
-		if err := s.WaitForCICDEvent(ctx, mergeSHA); err != nil {
-			log.Printf("Error waiting for CI/CD event: %v", err)
-			continue
-		}
-		log.Printf("CI/CD completed for SHA: %s", mergeSHA)
-
-		// Update lock key expiry to delay duration
-		if err := s.UpdateLockExpiry(ctx, s.cfg.Timeouts.CICDDelay); err != nil {
-			log.Printf("Error updating lock expiry: %v", err)
-		}
-		log.Printf("Lock expiry updated to delay duration: %v", s.cfg.Timeouts.CICDDelay)
-
-		// Loop will continue and check lock in next iteration
 	}
 }
 

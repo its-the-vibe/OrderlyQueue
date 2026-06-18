@@ -1,5 +1,5 @@
 # OrderlyQueue
-![CI](https://github.com/your-org/OrderlyQueue/actions/workflows/ci.yaml/badge.svg)
+![CI](https://github.com/its-the-vibe/OrderlyQueue/actions/workflows/ci.yaml/badge.svg)
 
 A Go-based service that serializes Pull Request merges by coordinating with Redis, waiting for successful CI/CD deployment completion, and enforcing a configurable delay before releasing the next PR for merge.
 
