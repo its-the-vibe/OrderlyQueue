@@ -108,7 +108,7 @@ func (s *Service) Run(ctx context.Context) error {
 			continue
 		}
 		if locked {
-			log.Println("Service is locked, waiting...")
+			// log.Println("Service is locked, waiting...")
 			time.Sleep(s.cfg.Timeouts.LockSleep)
 			continue
 		}
