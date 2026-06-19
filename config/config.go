@@ -32,6 +32,9 @@ type Config struct {
 	Poppit struct {
 		Dir string `yaml:"dir"`
 	} `yaml:"poppit"`
+	Admin struct {
+		Port int `yaml:"port"`
+	} `yaml:"admin"`
 }
 
 func LoadConfig(path string) (*Config, error) {

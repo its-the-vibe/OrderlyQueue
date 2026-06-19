@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"OrderlyQueue/admin"
 	"OrderlyQueue/config"
 	"OrderlyQueue/models"
 	"os"
@@ -98,6 +99,14 @@ func (s *Service) Run(ctx context.Context) error {
 	// Start independent loops for Step 6 and Step 7
 	go s.GithubEventLoop(ctx)
 	go s.CICDEventLoop(ctx)
+
+	// Start Admin UI
+	adminServer := admin.NewServer(s.cfg, s.redis)
+	go func() {
+		if err := adminServer.Start(ctx); err != nil {
+			log.Printf("Admin UI error: %v", err)
+		}
+	}()
 
 	for {
 		// Step 1-2: Check Lock State
