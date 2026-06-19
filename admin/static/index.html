@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OrderlyQueue Admin</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; line-height: 1.6; }
+        section { margin-bottom: 30px; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        h2 { margin-top: 0; }
+        .lock-status { font-weight: bold; }
+        .locked { color: red; }
+        .unlocked { color: green; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #ddd; }
+        button { cursor: pointer; padding: 5px 10px; }
+        .btn-danger { background-color: #ff4d4d; color: white; border: none; }
+        .btn-primary { background-color: #007bff; color: white; border: none; }
+        input[type="text"] { padding: 5px; width: 300px; }
+    </style>
+</head>
+<body>
+    <h1>OrderlyQueue Admin</h1>
+
+    <section id="lock-section">
+        <h2>Lock Management</h2>
+        <div id="lock-info">
+            Status: <span id="lock-status-text" class="lock-status">Loading...</span><br>
+            Current PR: <span id="lock-pr-url">-</span><br>
+            TTL: <span id="lock-ttl">-</span> seconds
+        </div>
+        <div style="margin-top: 10px;">
+            <button onclick="releaseLock()" class="btn-danger">Force Release Lock</button>
+            <button onclick="fetchLockStatus()" class="btn-primary">Refresh</button>
+        </div>
+    </section>
+
+    <section id="queue-section">
+        <h2>Queue Management</h2>
+        <div>
+            <input type="text" id="new-pr-url" placeholder="Enter PR URL (e.g., https://github.com/owner/repo/pull/1)">
+            <button onclick="addToQueue()" class="btn-primary">Add to Queue</button>
+        </div>
+        <table id="queue-table">
+            <thead>
+                <tr>
+                    <th>Position</th>
+                    <th>PR URL</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="queue-body">
+                <!-- Queue items will be inserted here -->
+            </tbody>
+        </table>
+        <div style="margin-top: 10px;">
+            <button onclick="clearQueue()" class="btn-danger">Clear All Queue Items</button>
+            <button onclick="fetchQueue()" class="btn-primary">Refresh Queue</button>
+        </div>
+    </section>
+
+    <script>
+        async function fetchLockStatus() {
+            try {
+                const response = await fetch('/api/lock');
+                const data = await response.json();
+                const statusText = document.getElementById('lock-status-text');
+                const prUrlText = document.getElementById('lock-pr-url');
+                const ttlText = document.getElementById('lock-ttl');
+
+                if (data.locked) {
+                    statusText.textContent = 'LOCKED';
+                    statusText.className = 'lock-status locked';
+                    prUrlText.textContent = data.pr_url;
+                    ttlText.textContent = Math.round(data.ttl_seconds);
+                } else {
+                    statusText.textContent = 'UNLOCKED';
+                    statusText.className = 'lock-status unlocked';
+                    prUrlText.textContent = '-';
+                    ttlText.textContent = '-';
+                }
+            } catch (error) {
+                console.error('Error fetching lock status:', error);
+            }
+        }
+
+        async function releaseLock() {
+            if (!confirm('Are you sure you want to forcefully release the lock? This may cause race conditions if a merge is in progress.')) return;
+            try {
+                await fetch('/api/lock', { method: 'DELETE' });
+                fetchLockStatus();
+            } catch (error) {
+                console.error('Error releasing lock:', error);
+            }
+        }
+
+        async function fetchQueue() {
+            try {
+                const response = await fetch('/api/queue');
+                const data = await response.json();
+                const tbody = document.getElementById('queue-body');
+                tbody.innerHTML = '';
+
+                if (!data || data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3">Queue is empty</td></tr>';
+                    return;
+                }
+
+                data.forEach((url, index) => {
+                    const row = tbody.insertRow();
+                    row.insertCell(0).textContent = index + 1;
+                    row.insertCell(1).textContent = url;
+                    const actionsCell = row.insertCell(2);
+                    const removeBtn = document.createElement('button');
+                    removeBtn.textContent = 'Remove';
+                    removeBtn.className = 'btn-danger';
+                    removeBtn.onclick = () => removeFromQueue(url);
+                    actionsCell.appendChild(removeBtn);
+                });
+            } catch (error) {
+                console.error('Error fetching queue:', error);
+            }
+        }
+
+        async function addToQueue() {
+            const urlInput = document.getElementById('new-pr-url');
+            const url = urlInput.value.trim();
+            if (!url) return;
+
+            try {
+                const response = await fetch('/api/queue', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+                if (response.ok) {
+                    urlInput.value = '';
+                    fetchQueue();
+                } else {
+                    const error = await response.text();
+                    alert('Error: ' + error);
+                }
+            } catch (error) {
+                console.error('Error adding to queue:', error);
+            }
+        }
+
+        async function removeFromQueue(url) {
+            if (!confirm(`Remove ${url} from queue?`)) return;
+            try {
+                await fetch(`/api/queue?url=${encodeURIComponent(url)}`, { method: 'DELETE' });
+                fetchQueue();
+            } catch (error) {
+                console.error('Error removing from queue:', error);
+            }
+        }
+
+        async function clearQueue() {
+            if (!confirm('Are you sure you want to clear the entire queue?')) return;
+            try {
+                await fetch('/api/queue', { method: 'DELETE' });
+                fetchQueue();
+            } catch (error) {
+                console.error('Error clearing queue:', error);
+            }
+        }
+
+        // Initial load
+        fetchLockStatus();
+        fetchQueue();
+        // Refresh every 10 seconds
+        setInterval(() => {
+            fetchLockStatus();
+            fetchQueue();
+        }, 10000);
+    </script>
+</body>
+</html>

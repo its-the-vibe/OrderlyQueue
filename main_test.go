@@ -9,6 +9,7 @@ import (
 
 	"OrderlyQueue/config"
 	"OrderlyQueue/models"
+	"net/http"
 
 	"github.com/alicebob/miniredis/v2"
 )
@@ -168,5 +169,41 @@ func TestWaitEvents(t *testing.T) {
 	if !success {
 		ttl := mr.TTL(svc.cfg.Keys.Lock)
 		t.Errorf("expected TTL to be around 5m, got %v", ttl)
+	}
+}
+
+func TestAdminUIIntegration(t *testing.T) {
+	svc, _ := setupTestService(t)
+	svc.cfg.Admin.Port = 8081 // Use different port for test
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		if err := svc.Run(ctx); err != nil {
+			log.Printf("Service Run exited: %v", err)
+		}
+	}()
+
+	// Wait for server to start
+	time.Sleep(500 * time.Millisecond)
+
+	resp, err := http.Get("http://localhost:8081/api/lock")
+	if err != nil {
+		t.Fatalf("failed to GET /api/lock: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status OK, got %v", resp.StatusCode)
+	}
+
+	resp, err = http.Get("http://localhost:8081/")
+	if err != nil {
+		t.Fatalf("failed to GET /: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status OK for index.html, got %v", resp.StatusCode)
 	}
 }

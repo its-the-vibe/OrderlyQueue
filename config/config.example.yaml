@@ -20,3 +20,6 @@ timeouts:
 
 poppit:
   dir: "/path/to/repo"
+
+admin:
+  port: 8080

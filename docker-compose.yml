@@ -4,6 +4,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    ports:
+      - "${PORT}:8080"
     read_only: true
     volumes:
       - ./config/config.yaml:/config/config.yaml:ro
