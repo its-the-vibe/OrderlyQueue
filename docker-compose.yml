@@ -1,6 +1,7 @@
 services:
   orderly-queue:
-    image: orderly-queue:latest
+    image: ghcr.io/its-the-vibe/orderlyqueue:latest
+    pull_policy: always
     build:
       context: .
       dockerfile: Dockerfile

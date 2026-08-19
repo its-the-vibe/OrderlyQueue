@@ -1,5 +1,8 @@
 # Build stage
-FROM golang:1.26.6-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.6-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /app
 
@@ -11,14 +14,16 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o orderlyq .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o orderlyq .
 
-# Final stage
-FROM scratch
+# Final stage (distroless)
+FROM gcr.io/distroless/static-debian13:nonroot
 
 WORKDIR /
 
 # Copy binary from builder
 COPY --from=builder /app/orderlyq /orderlyq
+
+USER nonroot:nonroot
 
 ENTRYPOINT ["/orderlyq"]
