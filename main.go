@@ -230,7 +230,7 @@ func (s *Service) CICDEventLoop(ctx context.Context) {
 }
 
 func main() {
-	configPath := "config/config.yaml"
+	configPath := "/config/config.yaml"
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		configPath = "config/config.example.yaml"
 	}
