@@ -8,9 +8,10 @@ services:
     ports:
       - "${PORT}:8080"
     read_only: true
+    env_file:
+      - .env
     volumes:
-      - ./config/config.yaml:/config/config.yaml:ro
-      - ./.env:/.env:ro
+      - ./config/config.yaml:/config/config.yaml:ro    
     restart: on-failure:10
     extra_hosts:
       - "host.docker.internal:host-gateway"    
