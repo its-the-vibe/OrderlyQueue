@@ -36,7 +36,7 @@
     </section>
 
     <section id="queue-section">
-        <h2>Queue Management</h2>
+        <h2>Queue Management <span id="queue-count" hidden></span></h2>
         <div>
             <input type="text" id="new-pr-url" placeholder="Enter PR URL (e.g., https://github.com/owner/repo/pull/1)">
             <button onclick="addToQueue()" class="btn-primary">Add to Queue</button>
@@ -99,7 +99,11 @@
                 const response = await fetch('/api/queue');
                 const data = await response.json();
                 const tbody = document.getElementById('queue-body');
+                const queueCount = document.getElementById('queue-count');
+                const count = data?.length ?? 0;
                 tbody.innerHTML = '';
+                queueCount.textContent = count === 1 ? '(1 item queued)' : `(${count} items queued)`;
+                queueCount.hidden = count === 0;
 
                 if (!data || data.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="3">Queue is empty</td></tr>';
